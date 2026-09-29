@@ -64,7 +64,7 @@ Add Django-native accounts to LitChat without hosting it or losing existing loca
 - [x] Update `docs/instructions.md` with first-superuser setup, legacy assignment for upgrades, normal-user signup/login, and separate superuser/user capabilities.
 - [x] Update `doc/wiki/litchat.md` and README with authentication, roles, ownership, and new routes.
 - [x] Mark this plan and study `Status: Completed (Authoritative Source: doc/wiki/litchat.md)` after acceptance criteria pass.
-- [ ] Inspect Git status/diff/log, ensure `.env`, the live DB, and backup are not staged, commit intended files, and push to `main`.
+- [x] Inspect Git status/diff/log, ensure `.env`, the live DB, and backup are not staged, commit intended files, and push to `main`.
 
 ## Feature Acceptance Criteria
 
