@@ -1,6 +1,7 @@
 # LitChat Personal-Use Feasibility
 
-**Status: Draft**
+**Status: Completed (Authoritative Source: doc/wiki/litchat.md)**
+
 **Study date:** 2026-09-29
 **Supersedes:** `0001-v3_litchat_personal_feasibility.md` as the current scope assessment
 

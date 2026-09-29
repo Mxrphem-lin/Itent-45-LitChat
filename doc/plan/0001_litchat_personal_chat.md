@@ -53,7 +53,7 @@ Build a personal, local-only Django chat web app with a responsive UI and three 
 - [x] Verify `.env` is ignored and no real secrets appear in tracked files, logs, or HTTP responses.
 - [x] Create `doc/wiki/litchat.md` describing setup, environment variables, architecture, local routes, and proxy behavior.
 - [ ] Mark this plan and its study `Status: Completed (Authoritative Source: doc/wiki/litchat.md)` after implementation and verification.
-- [ ] Initialize/connect the local repository to the supplied empty GitHub remote, inspect status/diff/log, commit only intended files, and push the completed work without secrets.
+- [x] Initialize/connect the local repository to the supplied empty GitHub remote, inspect status/diff/log, commit only intended files, and push the completed work without secrets.
 
 ## Feature Acceptance Criteria
 
