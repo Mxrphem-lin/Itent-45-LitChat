@@ -1,0 +1,136 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f2f1eb">
+  <title>LitChat</title>
+  <link rel="stylesheet" href="{% static 'chat/app.css' %}">
+</head>
+<body>
+  <div class="app-shell">
+    <div class="mobile-scrim" id="mobile-scrim" hidden></div>
+    <aside class="sidebar" id="sidebar" aria-label="Conversation navigation">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true"><span>l</span></div>
+        <div>
+          <div class="brand-name">LitChat</div>
+          <div class="brand-caption">A quieter kind of intelligence</div>
+        </div>
+      </div>
+
+      <button class="new-chat-button" id="new-chat" type="button">
+        <span class="plus-mark" aria-hidden="true">+</span>
+        <span>New conversation</span>
+        <span class="shortcut-hint">N</span>
+      </button>
+
+      <div class="history-heading">
+        <span>YOUR NOTEBOOK</span>
+        <span class="history-count" id="history-count">{{ conversations|length }}</span>
+      </div>
+      <nav class="conversation-list" id="conversation-list" aria-label="Saved conversations">
+        {% for conversation in conversations %}
+          <button class="conversation-link" type="button" data-conversation-id="{{ conversation.id }}">
+            <span class="conversation-glyph" aria-hidden="true">&gt;</span>
+            <span class="conversation-title">{{ conversation.title }}</span>
+          </button>
+        {% empty %}
+          <p class="history-empty" id="history-empty">Your conversations will gather here.</p>
+        {% endfor %}
+      </nav>
+
+      <div class="sidebar-foot">
+        <span class="local-indicator" aria-hidden="true"></span>
+        <div>
+          <strong>On this device</strong>
+          <span>History stored on this device</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-panel">
+      <header class="topbar">
+        <button class="icon-button menu-button" id="menu-toggle" type="button" aria-label="Open conversation navigation" aria-expanded="false" aria-controls="sidebar">
+          <span></span><span></span>
+        </button>
+        <div class="topbar-context">
+          <span class="eyebrow">YOUR PERSONAL AI DESK</span>
+          <span class="topbar-title" id="topbar-title">A place to think out loud</span>
+        </div>
+        <div class="provider-control">
+          <label for="provider-select">VOICE</label>
+          <div class="provider-select-wrap">
+            <span class="provider-orb" id="provider-orb" aria-hidden="true">O</span>
+            <select id="provider-select" aria-label="Choose a simulated provider experience">
+              {% for provider in providers %}
+                <option value="{{ provider.id }}" data-model="{{ provider.model }}" data-label="{{ provider.label }}">{{ provider.label }}</option>
+              {% endfor %}
+            </select>
+            <span class="select-caret" aria-hidden="true">v</span>
+          </div>
+          <span class="model-caption" id="model-caption"></span>
+        </div>
+        <button class="icon-button delete-button" id="delete-chat" type="button" aria-label="Delete this conversation" title="Delete conversation" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-.8 13H6.8L6 7m4 4v5m4-5v5"/></svg>
+        </button>
+      </header>
+
+      <section class="conversation-stage" aria-label="Chat conversation">
+        <div class="welcome-panel" id="welcome-panel">
+          <div class="welcome-kicker"><span class="sun-dot"></span> A PERSONAL SPACE FOR GOOD QUESTIONS</div>
+          <h1>Start with what<br><em>you are curious about.</em></h1>
+          <p class="welcome-copy">Choose a voice, follow a thought, and let the conversation unfold. Your history stays right here on this device.</p>
+          <div class="prompt-suggestions" aria-label="Prompt ideas">
+            <button type="button" class="suggestion-card" data-prompt="Help me understand an idea I keep coming back to.">
+              <span class="suggestion-icon idea-icon" aria-hidden="true">*</span>
+              <span><strong>Untangle an idea</strong><small>Make a complex thought clearer</small></span>
+              <span class="suggestion-arrow" aria-hidden="true">↗</span>
+            </button>
+            <button type="button" class="suggestion-card" data-prompt="Help me plan a small, achievable next step for something I want to do.">
+              <span class="suggestion-icon path-icon" aria-hidden="true">+</span>
+              <span><strong>Find a next step</strong><small>Turn a loose goal into a plan</small></span>
+              <span class="suggestion-arrow" aria-hidden="true">↗</span>
+            </button>
+            <button type="button" class="suggestion-card" data-prompt="Give me a fresh perspective on a decision I am thinking through.">
+              <span class="suggestion-icon spark-icon" aria-hidden="true">o</span>
+              <span><strong>See another angle</strong><small>Explore a decision with care</small></span>
+              <span class="suggestion-arrow" aria-hidden="true">↗</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="message-list" id="message-list" aria-live="polite" aria-relevant="additions text" hidden></div>
+        <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+      </section>
+
+      <footer class="composer-area">
+        <div class="simulation-note">
+          <span class="note-spark" aria-hidden="true">*</span>
+          Provider voices are simulated by a shared DeepSeek Flash backend.
+        </div>
+        <form class="composer" id="composer-form">
+          {% csrf_token %}
+          <label class="visually-hidden" for="prompt-input">Write a message</label>
+          <textarea id="prompt-input" name="content" rows="1" maxlength="20000" placeholder="Ask something, explore a thought…" autocomplete="off"></textarea>
+          <div class="composer-tools">
+            <span class="composer-hint">Enter to send <span aria-hidden="true">|</span> Shift + Enter for a new line</span>
+            <div class="composer-actions">
+              <button class="stop-button" id="stop-button" type="button" hidden>Stop</button>
+              <button class="send-button" id="send-button" type="submit" aria-label="Send message">
+                <span>Send</span>
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 10h12m-5-5 5 5-5 5"/></svg>
+              </button>
+            </div>
+          </div>
+        </form>
+        <p class="privacy-footnote">Prompts go to proxy.litechat.ai; history stays on this device and API keys stay server-side.</p>
+      </footer>
+    </main>
+  </div>
+
+  {{ providers|json_script:"provider-data" }}
+  <script src="{% static 'chat/app.js' %}" defer></script>
+</body>
+</html>
