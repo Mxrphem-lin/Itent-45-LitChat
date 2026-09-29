@@ -43,4 +43,4 @@ The app also starts without API keys so the UI can be explored; sending is disab
 - Text chat with streamed responses and local conversation history.
 - Provider API calls and credentials stay on the Django server.
 
-See `doc/wiki/litchat.md` for the current architecture, configuration, and route documentation.
+See [`docs/instructions.md`](docs/instructions.md) for complete download and setup instructions, and `doc/wiki/litchat.md` for the current architecture, configuration, and route documentation.

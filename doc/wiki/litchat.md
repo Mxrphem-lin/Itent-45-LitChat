@@ -2,6 +2,8 @@
 
 LitChat is a single-user, local-only chat web app. It provides OpenAI-, Anthropic-, and Google-style simulated provider experiences through BUILD LLM Proxy. The proxy documents that the interfaces share a DeepSeek Flash backend; the selector changes the simulated interface/persona, not the underlying model weights.
 
+For clone/download and platform-specific setup instructions, see [`docs/instructions.md`](../../docs/instructions.md).
+
 ## Run Locally
 
 Requires Python 3.12 or newer.
