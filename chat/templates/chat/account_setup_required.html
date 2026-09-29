@@ -1,0 +1,13 @@
+{% extends "chat/auth_base.html" %}
+
+{% block title %}Setup required | LitChat{% endblock %}
+{% block eyebrow %}OWNER SETUP REQUIRED{% endblock %}
+{% block account_content %}
+  <h1 class="auth-title">One last step<br><em>for this machine.</em></h1>
+  <p class="auth-copy">Before normal accounts can be created, the owner must create the LitChat superuser and assign any existing conversations to it.</p>
+  <div class="setup-commands">
+    <code>python manage.py createsuperuser</code>
+    <code>python manage.py assign_legacy_conversations --username YOUR_SUPERUSER</code>
+  </div>
+  <p class="auth-switch"><a href="{% url 'login' %}">Return to sign in</a></p>
+{% endblock %}

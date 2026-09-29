@@ -1,0 +1,25 @@
+{% extends "chat/auth_base.html" %}
+
+{% block title %}Create account | LitChat{% endblock %}
+{% block eyebrow %}A SPACE OF YOUR OWN{% endblock %}
+{% block account_content %}
+  <h1 class="auth-title">Make room<br><em>for your thoughts.</em></h1>
+  <p class="auth-copy">Create a local username and password. Your conversations will be separated from other accounts on this machine.</p>
+  {% for message in messages %}
+    <p class="auth-message">{{ message }}</p>
+  {% endfor %}
+  <form method="post" class="auth-form">
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="auth-errors" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+    {% for field in form %}
+      <div class="auth-field">
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+        {% if field.help_text %}<small class="auth-help">{{ field.help_text|safe }}</small>{% endif %}
+        {% if field.errors %}<div class="auth-errors" role="alert">{{ field.errors }}</div>{% endif %}
+      </div>
+    {% endfor %}
+    <button class="auth-submit" type="submit">Create account <span aria-hidden="true">&gt;</span></button>
+  </form>
+  <p class="auth-switch">Already have an account? <a href="{% url 'login' %}">Sign in</a></p>
+{% endblock %}

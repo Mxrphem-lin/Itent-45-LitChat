@@ -1,0 +1,28 @@
+{% extends "chat/auth_base.html" %}
+
+{% block title %}Sign in | LitChat{% endblock %}
+{% block eyebrow %}WELCOME BACK{% endblock %}
+{% block account_content %}
+  <h1 class="auth-title">Sign in to<br><em>your notebook.</em></h1>
+  <p class="auth-copy">Your conversations are saved locally and visible only to your account in LitChat.</p>
+  {% for message in messages %}
+    <p class="auth-message">{{ message }}</p>
+  {% endfor %}
+  {% if form.non_field_errors %}<div class="auth-errors" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+  <form method="post" class="auth-form">
+    {% csrf_token %}
+    {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+    <div class="auth-field">
+      <label for="id_username">Username</label>
+      <input id="id_username" name="username" type="text" autocomplete="username" required autofocus>
+      {% if form.username.errors %}<div class="auth-errors">{{ form.username.errors }}</div>{% endif %}
+    </div>
+    <div class="auth-field">
+      <label for="id_password">Password</label>
+      <input id="id_password" name="password" type="password" autocomplete="current-password" required>
+      {% if form.password.errors %}<div class="auth-errors">{{ form.password.errors }}</div>{% endif %}
+    </div>
+    <button class="auth-submit" type="submit">Sign in <span aria-hidden="true">&gt;</span></button>
+  </form>
+  <p class="auth-switch">New to this machine? <a href="{% url 'signup' %}">Create a normal account</a></p>
+{% endblock %}

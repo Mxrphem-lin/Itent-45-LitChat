@@ -1,6 +1,6 @@
 # LitChat Local User Accounts Feasibility
 
-**Status: Draft**
+**Status: Completed (Authoritative Source: doc/wiki/litchat.md)**
 **Study date:** 2026-09-29
 **Supersedes:** The no-account scope in `doc/study/0001-v4_litchat_personal_feasibility.md` for this proposed feature
 
@@ -10,6 +10,7 @@
 - **Why:** LitChat will be used by different people in sequence on one local machine for the vibecoding midterm.
 - **Direct comparison:** The current authoritative app has no authentication and treats all local conversations as one collection. The prior study explicitly excluded accounts. This proposal keeps LitChat local-only and non-monetized but introduces account roles, sessions, per-user data ownership, and an ownership migration for existing conversations.
 - **Unchanged:** Django, SQLite, server-side shared proxy credentials, and loopback-only access remain the working baseline unless the open questions change them.
+- **Owner decisions:** Preserve old conversations and assign them to the first superuser; use shared-browser logout rather than a global session lock; keep chat contents private from account administration; cascade account deletion to that user's chats after confirmation; and share the `.env` provider keys across users.
 
 ## Product Goal
 
@@ -44,10 +45,11 @@ This is an app-level account boundary on the owner's machine, not a remotely hos
 - Create the first and only superuser with `manage.py createsuperuser`. Do not offer superuser creation from public signup.
 - Provide normal self-registration with username/password confirmation. Server-side creation must always set normal-user privileges; never accept `is_staff` or `is_superuser` from submitted form data.
 - Provide login, logout, and self-service password change. With no email service, password recovery for normal users is performed by the superuser.
+- Throttle repeated failed sign-ins per username/loopback client. Mark authenticated HTML/API responses private and non-cacheable, and clear the visible chat state during logout for shared-browser privacy.
 - Use the Django admin account-management pages for a first version, with a custom UserAdmin that lets the superuser inspect accounts, change/reset passwords, and delete normal accounts, but does not allow creating/promoting additional superusers. Link to this area from LitChat only for the superuser.
 - Do not register conversations/messages in the admin initially. Users see only their own chats; account administration does not imply an in-app right to browse chat contents.
 - Add a non-null conversation owner relation after deciding how to backfill existing rows. Apply ownership filtering to every query and endpoint, including conversation UUID lookups, message reads, creates, deletes, and streaming requests.
-- Deleting a normal account should require confirmation and, by default, delete that account's conversations/messages as well. Protect the sole superuser from self-deletion or demotion in the UI.
+- Deleting a normal account requires confirmation and deletes that account's conversations/messages. Protect the sole superuser from deletion or demotion in the UI.
 - Keep current provider credentials in the machine-level `.env`, shared by local accounts. They remain server-side and are not stored on user records.
 - Keep `LoopbackOnlyMiddleware` and bind the server to `127.0.0.1`. Logout clears the current browser session; do not add remote hosting or LAN access.
 
@@ -55,49 +57,29 @@ This is an app-level account boundary on the owner's machine, not a remotely hos
 
 The existing `Conversation` model has no owner and the local SQLite database may have real chat history. Do not drop or recreate the database as part of account setup.
 
-If the history should be preserved, a safe migration can first add a nullable owner FK, then assign existing ownerless conversations to the initial superuser through an explicit management step, verify the data, and only then enforce non-null ownership. All new conversations must be assigned to the authenticated user. If history is intentionally disposable, take a backup and document an explicit reset instead of silently deleting it.
+Preserve the existing history. Add a nullable owner FK first, create the initial superuser, then run an explicit management command to assign all ownerless conversations to that superuser and verify the result. All new conversations must be assigned to the authenticated user. Keep the FK nullable only to support the staged upgrade; views must never expose ownerless rows to normal users.
 
 ## Assumptions
 
 - **Assumed:** Normal-user signup is self-service on the local app, while superuser creation is an owner-run management command.
 - **Assumed:** The built-in Django admin is acceptable for account management in the midterm; a branded admin dashboard can be added later if presentation requires it.
-- **Assumed:** All normal accounts use the same three provider keys configured in the machine's `.env`; per-user API keys are not part of this feature.
 - **Assumed:** Normal users may change their own password; only the superuser can reset another user's password or delete their account.
-- **Assumed:** The first superuser account owns pre-existing conversations if the owner chooses to preserve them.
 
 ## Decisions and Scope
 
 - **Confirmed by owner:** Keep all accounts and chats in the local machine's SQLite database; no hosting is planned.
 - **Confirmed by owner:** Use one superuser and normal user accounts with username/password signup and login.
-- **Confirmed by owner:** Users share one local machine and are expected to log out before another person uses the same browser.
+- **Confirmed by owner:** Preserve existing conversations and assign them to the first superuser.
+- **Confirmed by owner:** Users share one browser workflow and log out before the next person signs in; browser-close session expiry is enabled, with no global lock across separate browser profiles.
+- **Confirmed by owner:** The superuser manages accounts, not other users' chat contents.
+- **Confirmed by owner:** Deleting a normal account deletes its conversations after explicit confirmation.
+- **Confirmed by owner:** All accounts share the provider keys in the machine's `.env`.
+- **Confirmed by owner:** Use Django admin for account management; normal-user signup remains self-service.
 - **Out of scope:** Email verification, email/password reset, OAuth/social login, remote registration, multiple superusers, per-user provider credentials, billing, and cloud sync.
 
 ## Open Questions
 
-1. **Question:** Should conversations already in the local SQLite database be preserved and assigned to the first superuser, or discarded/reset when accounts are introduced?
-   **Why it matters:** The current database has no owner relation. This determines whether the migration needs a backfill and requires a backup before applying it.
-   **Recommended default:** Preserve existing conversations and assign them to the first superuser; do not inspect or delete them during migration.
-   **Status:** `blocking`
-
-2. **Question:** Does "User 1 must log out before User 2 logs in" mean a shared-browser workflow, or must LitChat enforce at most one active user session across every browser on the machine?
-   **Why it matters:** Django logout naturally clears the shared browser session, but separate browser profiles can hold independent sessions. A machine-wide lock requires additional session tracking/invalidation behavior.
-   **Recommended default:** Support the shared-browser logout/login workflow without a global session lock. Add a global lock only if enforcing one active account at a time is a firm requirement.
-   **Status:** `blocking`
-
-3. **Question:** Should the superuser be able to read normal users' chat contents, or only manage their accounts?
-   **Why it matters:** Account-management rights do not necessarily imply access to private prompts and responses. This affects what the admin interface exposes.
-   **Recommended default:** Do not register conversations/messages in the admin; each user sees only their own chats.
-   **Status:** `blocking`
-
-4. **Question:** When the superuser deletes a normal account, should that user's chat history be permanently deleted too?
-   **Why it matters:** Cascading account deletion is destructive and determines data-retention behavior.
-   **Recommended default:** Delete the user's conversations/messages after an explicit confirmation.
-   **Status:** `blocking`
-
-5. **Question:** Are machine-level proxy credentials shared by every account, as assumed, or should each local user configure separate provider keys?
-   **Why it matters:** Per-user keys require secure credential storage and settings UI; shared keys keep the current simple `.env` configuration.
-   **Recommended default:** Share the existing server-side `.env` keys across accounts; keep keys out of user records.
-   **Status:** `assumed`
+- None blocking. The owner confirmed the migration policy, session behavior, account-management boundary, deletion behavior, shared keys, and Django Admin choice.
 
 ## Risks and Trade-offs
 
@@ -106,6 +88,7 @@ If the history should be preserved, a safe migration can first add a nullable ow
 - **Existing data loss:** Schema changes can orphan or delete local chats if ownership/backfill is skipped. Back up `db.sqlite3` before migration and follow the agreed migration path.
 - **Local-machine trust boundary:** App passwords protect the LitChat interface, not the SQLite file or `.env` from someone with OS-level access to the machine. This is not isolation from the machine owner.
 - **Session confusion:** Shared-browser logout must be visible and reliable. Browser profiles may represent independent sessions unless a global lock is deliberately added.
+- **Stale browser cache / password guessing:** Do not cache authenticated chat responses; rate-limit repeated failed local sign-ins without logging credentials.
 - **Admin UX:** Django admin is quick and secure for account management but visually distinct from LitChat. A custom admin experience costs more implementation and testing effort.
 - **Shared proxy account:** All users' prompts go through the owner's configured proxy credentials, while prompts are still sent to the proxy service. The app does not track per-user usage or cost.
 
@@ -117,4 +100,4 @@ If the history should be preserved, a safe migration can first add a nullable ow
 
 ## Recommendation and Next Discussion
 
-Proceed with Django's built-in auth and sessions, normal-user self-registration, a CLI-created superuser, and strict owner filtering for all chats. Use Django admin as the initial account-management interface and retain the local-only middleware. Before writing an implementation plan, resolve the blocking questions about existing chat history, machine-wide session exclusivity, superuser access to chat contents, and account-deletion retention.
+Proceed with Django's built-in auth and sessions, normal-user self-registration, a CLI-created superuser, and strict owner filtering for all chats. Use Django admin for account management and retain the local-only middleware. The implementation plan must include a safe legacy-conversation assignment command and update `docs/instructions.md` with superuser/normal-user setup and role capabilities.

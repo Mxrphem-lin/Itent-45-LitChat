@@ -1,0 +1,28 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block breadcrumbs %}
+  <div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% translate "Home" %}</a>
+    &rsaquo; <a href="{% url 'admin:auth_user_changelist' %}">{% translate "Accounts" %}</a>
+    &rsaquo; {% translate "Delete account" %}
+  </div>
+{% endblock %}
+
+{% block content %}
+  {% if perms_lacking or protected %}
+    <p>{% translate "This account cannot be deleted because it has protected related data or required permissions are missing." %}</p>
+  {% else %}
+    <p>{% blocktranslate with username=object.username %}Delete the account for {{ username }}? This also permanently deletes that user's LitChat conversations. Conversation titles and message contents are intentionally not displayed here.{% endblocktranslate %}</p>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="post" value="yes">
+      {% if is_popup %}<input type="hidden" name="{{ is_popup_var }}" value="1">{% endif %}
+      {% if to_field %}<input type="hidden" name="{{ to_field_var }}" value="{{ to_field }}">{% endif %}
+      <div class="submit-row">
+        <input type="submit" value="{% translate 'Delete account and conversations' %}" class="deletelink">
+        <a href="{% url 'admin:auth_user_changelist' %}" class="button cancel-link">{% translate "Cancel" %}</a>
+      </div>
+    </form>
+  {% endif %}
+{% endblock %}

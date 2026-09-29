@@ -17,6 +17,7 @@
   const stopButton = document.getElementById("stop-button");
   const newChatButton = document.getElementById("new-chat");
   const deleteButton = document.getElementById("delete-chat");
+  const logoutForm = document.getElementById("logout-form");
   const menuToggle = document.getElementById("menu-toggle");
   const toast = document.getElementById("toast");
   const topbarTitle = document.getElementById("topbar-title");
@@ -477,6 +478,20 @@
 
   deleteButton.addEventListener("click", deleteConversation);
   stopButton.addEventListener("click", () => activeController?.abort());
+  logoutForm?.addEventListener("submit", () => {
+    conversationList.replaceChildren();
+    historyCount.textContent = "0";
+    messageList.replaceChildren();
+    messageList.hidden = true;
+    welcomePanel.hidden = true;
+    topbarTitle.textContent = "Signing out";
+    document.querySelector(".sidebar-foot strong").textContent = "Signed out";
+    document.querySelector(".account-name").textContent = "";
+    document.querySelector(".account-avatar").textContent = "";
+  });
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) window.location.reload();
+  });
   conversationList.addEventListener("click", (event) => {
     const button = event.target.closest("[data-conversation-id]");
     if (creatingConversation) return;

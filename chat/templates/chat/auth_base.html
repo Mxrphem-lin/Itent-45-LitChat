@@ -1,0 +1,24 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f2f1eb">
+  <title>{% block title %}LitChat account{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'chat/app.css' %}">
+</head>
+<body class="auth-body">
+  <main class="auth-shell">
+    <a class="auth-brand" href="{% url 'home' %}" aria-label="LitChat home">
+      <span class="brand-mark" aria-hidden="true"><span>l</span></span>
+      <span class="brand-name">LitChat</span>
+    </a>
+    <section class="auth-card">
+      <div class="welcome-kicker"><span class="sun-dot"></span>{% block eyebrow %}YOUR PERSONAL AI DESK{% endblock %}</div>
+      {% block account_content %}{% endblock %}
+    </section>
+    <p class="auth-local-note">Local account | Conversations stay on this device. Prompts are sent to proxy.litechat.ai.</p>
+  </main>
+</body>
+</html>

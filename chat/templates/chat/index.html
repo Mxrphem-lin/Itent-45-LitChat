@@ -44,8 +44,8 @@
       <div class="sidebar-foot">
         <span class="local-indicator" aria-hidden="true"></span>
         <div>
-          <strong>On this device</strong>
-          <span>History stored on this device</span>
+          <strong>{{ request.user.username }}</strong>
+          <span>{% if request.user.is_superuser %}Superuser account{% else %}Local account{% endif %}</span>
         </div>
       </div>
     </aside>
@@ -72,6 +72,27 @@
           </div>
           <span class="model-caption" id="model-caption"></span>
         </div>
+        <details class="account-menu">
+          <summary aria-label="Account menu for {{ request.user.username }}">
+            <span class="account-avatar" aria-hidden="true">{{ request.user.username|first|upper }}</span>
+            <span class="account-name">{{ request.user.username }}</span>
+            <span class="account-caret" aria-hidden="true">v</span>
+          </summary>
+          <div class="account-popover">
+            <div class="account-popover-heading">
+              <span>Signed in as</span>
+              <strong>{{ request.user.username }}</strong>
+            </div>
+            <a href="{% url 'password_change' %}">Change password</a>
+            {% if request.user.is_superuser %}
+              <a href="{% url 'admin:auth_user_changelist' %}">Manage accounts</a>
+            {% endif %}
+            <form id="logout-form" method="post" action="{% url 'logout' %}">
+              {% csrf_token %}
+              <button type="submit">Log out</button>
+            </form>
+          </div>
+        </details>
         <button class="icon-button delete-button" id="delete-chat" type="button" aria-label="Delete this conversation" title="Delete conversation" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-.8 13H6.8L6 7m4 4v5m4-5v5"/></svg>
         </button>

@@ -3,11 +3,17 @@ import os
 from unittest.mock import patch
 
 import httpx
-from django.test import Client, TestCase
+from django.core.cache import cache
+from django.contrib.auth import get_user_model
+from django.core.management import call_command
+from django.core.management.base import CommandError
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
 from .models import Conversation, Message
 from .providers import ProviderError, stream_reply
+
+User = get_user_model()
 
 
 class ProviderAdapterTests(TestCase):
@@ -153,9 +159,12 @@ class ProviderAdapterTests(TestCase):
                 )
 
 
+@override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
 class ChatViewTests(TestCase):
     def setUp(self):
-        self.conversation = Conversation.objects.create()
+        self.user = User.objects.create_user(username="alice", password="LocalTestPass!84")
+        self.client.force_login(self.user)
+        self.conversation = Conversation.objects.create(owner=self.user)
 
     def post_message(self, client=None, provider="openai", content="Hello"):
         client = client or self.client
@@ -174,6 +183,7 @@ class ChatViewTests(TestCase):
         self.assertContains(response, "Anthropic")
         self.assertContains(response, "Google")
         self.assertContains(response, "shared DeepSeek Flash backend")
+        self.assertIn("no-store", response.headers["Cache-Control"])
 
     @patch.dict(os.environ, {"BUILD_OPENAI_KEY": "never-render-this-secret"})
     def test_provider_key_is_not_rendered_into_the_page(self):
@@ -218,6 +228,7 @@ class ChatViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.streaming)
+        self.assertIn("no-store", response["Cache-Control"])
         body = b"".join(response.streaming_content).decode()
         self.assertIn('"type": "delta"', body)
         self.assertIn('"type": "done"', body)
@@ -269,6 +280,7 @@ class ChatViewTests(TestCase):
 
     def test_post_requires_csrf_token(self):
         client = Client(enforce_csrf_checks=True)
+        client.force_login(self.user)
         response = self.post_message(client=client)
 
         self.assertEqual(response.status_code, 403)
@@ -277,6 +289,7 @@ class ChatViewTests(TestCase):
     @patch("chat.views.stream_reply", return_value=iter(["Hello."]))
     def test_template_csrf_token_allows_local_chat_post(self, _stream_reply):
         client = Client(enforce_csrf_checks=True)
+        client.force_login(self.user)
         page = client.get(reverse("home"))
         token = page.cookies["csrftoken"].value
         response = client.post(
@@ -288,3 +301,273 @@ class ChatViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         b"".join(response.streaming_content)
+
+    def test_anonymous_users_are_redirected_before_chat_data_is_returned(self):
+        client = Client()
+
+        home = client.get(reverse("home"))
+        history = client.get(reverse("conversation-collection"))
+
+        self.assertEqual(home.status_code, 302)
+        self.assertIn(reverse("login"), home.url)
+        self.assertIn("no-store", home.headers["Cache-Control"])
+        self.assertEqual(history.status_code, 302)
+        self.assertIn("no-store", history.headers["Cache-Control"])
+
+
+@override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
+class AccountFlowTests(TestCase):
+    def setUp(self):
+        self.superuser = User.objects.create_superuser(
+            username="owner",
+            email="owner@example.invalid",
+            password="OwnerLocalPass!84",
+        )
+        self.user = User.objects.create_user(
+            username="reader",
+            email="",
+            password="ReaderLocalPass!84",
+        )
+
+    def test_signup_creates_only_a_normal_user(self):
+        response = self.client.post(
+            reverse("signup"),
+            {
+                "username": "new-reader",
+                "password1": "TidyRiver!74_Moon",
+                "password2": "TidyRiver!74_Moon",
+                "is_staff": "on",
+                "is_superuser": "on",
+            },
+        )
+
+        self.assertRedirects(response, reverse("login"))
+        created = User.objects.get(username="new-reader")
+        self.assertFalse(created.is_staff)
+        self.assertFalse(created.is_superuser)
+        self.assertTrue(created.check_password("TidyRiver!74_Moon"))
+        self.assertNotEqual(created.password, "TidyRiver!74_Moon")
+
+    def test_signup_is_blocked_until_superuser_and_legacy_setup_are_ready(self):
+        conversation = Conversation.objects.create(owner=None)
+        response = self.client.get(reverse("signup"))
+
+        self.assertEqual(response.status_code, 503)
+        self.assertContains(response, "assign_legacy_conversations", status_code=503)
+        self.assertTrue(Conversation.objects.filter(pk=conversation.pk, owner__isnull=True).exists())
+
+    def test_login_logout_and_password_change(self):
+        client = Client()
+        login_response = client.post(
+            reverse("login"),
+            {"username": "reader", "password": "ReaderLocalPass!84"},
+        )
+        self.assertRedirects(login_response, reverse("home"))
+        self.assertIn("no-store", login_response.headers["Cache-Control"])
+        self.assertEqual(client.get(reverse("home")).status_code, 200)
+
+        change_response = client.post(
+            reverse("password_change"),
+            {
+                "old_password": "ReaderLocalPass!84",
+                "new_password1": "FreshRiver!75_Cloud",
+                "new_password2": "FreshRiver!75_Cloud",
+            },
+        )
+        self.assertRedirects(change_response, reverse("password_change_done"))
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("FreshRiver!75_Cloud"))
+
+        logout_response = client.post(reverse("logout"))
+        self.assertRedirects(logout_response, reverse("login"))
+        self.assertIn("no-store", logout_response.headers["Cache-Control"])
+        self.assertEqual(client.get(reverse("home")).status_code, 302)
+
+    def test_login_throttles_repeated_failed_attempts(self):
+        cache.clear()
+        client = Client()
+        for _ in range(5):
+            response = client.post(
+                reverse("login"),
+                {"username": "reader", "password": "incorrect-password"},
+            )
+            self.assertEqual(response.status_code, 200)
+
+        throttled = client.post(
+            reverse("login"),
+            {"username": "reader", "password": "incorrect-password"},
+        )
+        self.assertEqual(throttled.status_code, 429)
+        self.assertContains(throttled, "Too many failed sign-in attempts", status_code=429)
+
+    def test_successful_login_clears_failed_attempt_throttle(self):
+        cache.clear()
+        client = Client()
+        for _ in range(4):
+            client.post(
+                reverse("login"),
+                {"username": "reader", "password": "incorrect-password"},
+            )
+
+        success = client.post(
+            reverse("login"),
+            {"username": "reader", "password": "ReaderLocalPass!84"},
+        )
+        self.assertEqual(success.status_code, 302)
+        client.post(
+            reverse("logout"),
+        )
+        after_reset = client.post(
+            reverse("login"),
+            {"username": "reader", "password": "incorrect-password"},
+        )
+        self.assertEqual(after_reset.status_code, 200)
+
+    def test_admin_can_reset_and_delete_normal_accounts_but_not_manage_chats(self):
+        conversation = Conversation.objects.create(
+            owner=self.user, title="private prompt-derived conversation title"
+        )
+        Message.objects.create(
+            conversation=conversation,
+            role=Message.Role.USER,
+            content="private test prompt",
+        )
+        admin_client = Client()
+        admin_client.force_login(self.superuser)
+
+        change_list = admin_client.get(reverse("admin:auth_user_changelist"))
+        self.assertEqual(change_list.status_code, 200)
+        self.assertNotContains(change_list, "private test prompt")
+        self.assertNotContains(
+            admin_client.get(reverse("admin:auth_user_add")),
+            'name="is_superuser"',
+        )
+
+        admin_client.post(
+            reverse("admin:auth_user_change", args=[self.user.pk]),
+            {
+                "username": self.user.username,
+                "first_name": "",
+                "last_name": "",
+                "email": "",
+                "is_active": "on",
+                "is_staff": "on",
+                "is_superuser": "on",
+            },
+        )
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_staff)
+        self.assertFalse(self.user.is_superuser)
+
+        password_url = reverse("admin:auth_user_password_change", args=[self.user.pk])
+        password_response = admin_client.post(
+            password_url,
+            {"password1": "AdminReset!84_River", "password2": "AdminReset!84_River"},
+        )
+        self.assertEqual(password_response.status_code, 302)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("AdminReset!84_River"))
+
+        superuser_delete = admin_client.get(
+            reverse("admin:auth_user_delete", args=[self.superuser.pk])
+        )
+        self.assertEqual(superuser_delete.status_code, 403)
+
+        delete_url = reverse("admin:auth_user_delete", args=[self.user.pk])
+        confirmation = admin_client.get(delete_url)
+        self.assertEqual(confirmation.status_code, 200)
+        self.assertNotContains(confirmation, "private prompt-derived conversation title")
+        self.assertNotContains(confirmation, "private test prompt")
+        self.assertContains(confirmation, "Delete account and conversations")
+        deleted = admin_client.post(delete_url, {"post": "yes"})
+        self.assertEqual(deleted.status_code, 302)
+        self.assertFalse(User.objects.filter(pk=self.user.pk).exists())
+        self.assertFalse(Conversation.objects.filter(pk=conversation.pk).exists())
+
+    def test_superuser_link_is_hidden_from_normal_users(self):
+        owner_client = Client()
+        owner_client.force_login(self.superuser)
+        owner_page = owner_client.get(reverse("home"))
+        self.assertContains(owner_page, "Manage accounts")
+
+        user_client = Client()
+        user_client.force_login(self.user)
+        user_page = user_client.get(reverse("home"))
+        self.assertNotContains(user_page, "Manage accounts")
+
+    def test_conversations_are_not_registered_in_admin(self):
+        admin_client = Client()
+        admin_client.force_login(self.superuser)
+        response = admin_client.get("/admin/chat/conversation/")
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_normal_user_cannot_access_admin_or_other_users_conversations(self):
+        conversation = Conversation.objects.create(owner=self.superuser)
+        Message.objects.create(
+            conversation=conversation,
+            role=Message.Role.USER,
+            content="secret to the owner only",
+        )
+        client = Client()
+        client.force_login(self.user)
+
+        admin_page = client.get(reverse("admin:auth_user_changelist"))
+        self.assertIn(admin_page.status_code, (302, 403))
+        history = client.get(reverse("conversation-collection"))
+        self.assertEqual(history.json()["conversations"], [])
+        detail = client.get(reverse("conversation-detail", args=[conversation.id]))
+        messages = client.get(reverse("conversation-messages", args=[conversation.id]))
+        deleted = client.delete(reverse("conversation-detail", args=[conversation.id]))
+        sent = client.post(
+            reverse("conversation-messages", args=[conversation.id]),
+            data=json.dumps({"provider": "openai", "content": "No"}),
+            content_type="application/json",
+        )
+        self.assertEqual(detail.status_code, 404)
+        self.assertEqual(messages.status_code, 404)
+        self.assertEqual(deleted.status_code, 404)
+        self.assertEqual(sent.status_code, 404)
+        self.assertTrue(Conversation.objects.filter(pk=conversation.pk).exists())
+
+    def test_owner_scoped_responses_are_not_cacheable(self):
+        conversation = Conversation.objects.create(owner=self.user)
+        client = Client()
+        client.force_login(self.user)
+        response = client.get(
+            reverse("conversation-detail", args=[conversation.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("no-store", response.headers["Cache-Control"])
+
+    def test_legacy_assignment_preserves_content_and_is_idempotent(self):
+        legacy = Conversation.objects.create(owner=None, title="Old local chat")
+        message = Message.objects.create(
+            conversation=legacy,
+            role=Message.Role.USER,
+            content="must not be printed by the command",
+        )
+        already_owned = Conversation.objects.create(owner=self.user)
+
+        call_command("assign_legacy_conversations", username=self.superuser.username)
+        call_command("assign_legacy_conversations", username=self.superuser.username)
+
+        legacy.refresh_from_db()
+        message.refresh_from_db()
+        already_owned.refresh_from_db()
+        self.assertEqual(legacy.owner, self.superuser)
+        self.assertEqual(message.content, "must not be printed by the command")
+        self.assertEqual(already_owned.owner, self.user)
+
+    def test_legacy_assignment_rejects_normal_user(self):
+        with self.assertRaises(CommandError):
+            call_command("assign_legacy_conversations", username=self.user.username)
+
+
+class InitialAccountSetupTests(TestCase):
+    def test_signup_is_blocked_until_a_superuser_exists(self):
+        response = self.client.get(reverse("signup"))
+
+        self.assertEqual(response.status_code, 503)
+        self.assertContains(response, "createsuperuser", status_code=503)

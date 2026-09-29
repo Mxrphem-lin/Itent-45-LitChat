@@ -1,19 +1,30 @@
+import hashlib
 import json
 import logging
 
 from django.conf import settings
+from django.contrib import messages as django_messages
+from django.contrib.auth import get_user_model
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.views import LoginView
+from django.core.cache import cache
 from django.db import transaction
 from django.http import JsonResponse, StreamingHttpResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
-from django.views.decorators.http import require_GET, require_http_methods, require_POST
+from django.views.decorators.cache import never_cache
+from django.views.decorators.http import require_http_methods
 
+from .forms import SignUpForm
 from .models import Conversation, Message
 from .providers import PROVIDERS, ProviderError, missing_credential, stream_reply
 
 
 logger = logging.getLogger(__name__)
 MAX_PROMPT_LENGTH = 20_000
+User = get_user_model()
+LOGIN_FAILURE_LIMIT = 5
+LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
 
 
 def _provider_options():
@@ -54,31 +65,99 @@ def _recover_abandoned_streams(conversation):
     )
 
 
+class LitChatLoginView(LoginView):
+    template_name = "registration/login.html"
+    redirect_authenticated_user = True
+
+    def _attempt_key(self):
+        username = self.request.POST.get("username", "").strip().casefold()
+        remote_addr = self.request.META.get("REMOTE_ADDR", "")
+        digest = hashlib.sha256(f"{remote_addr}\0{username}".encode()).hexdigest()
+        return f"litchat-login:{digest}"
+
+    def post(self, request, *args, **kwargs):
+        attempt_key = self._attempt_key()
+        if cache.get(attempt_key, 0) >= LOGIN_FAILURE_LIMIT:
+            form = self.get_form()
+            form.add_error(None, "Too many failed sign-in attempts. Wait 15 minutes and try again.")
+            return self.render_to_response(self.get_context_data(form=form), status=429)
+        return super().post(request, *args, **kwargs)
+
+    def form_invalid(self, form):
+        if self.request.POST.get("username", "").strip() and self.request.POST.get("password"):
+            attempt_key = self._attempt_key()
+            if not cache.add(
+                attempt_key, 1, timeout=LOGIN_FAILURE_WINDOW_SECONDS
+            ):
+                try:
+                    cache.incr(attempt_key)
+                except ValueError:
+                    cache.set(attempt_key, 1, timeout=LOGIN_FAILURE_WINDOW_SECONDS)
+        return super().form_invalid(form)
+
+    def form_valid(self, form):
+        cache.delete(self._attempt_key())
+        return super().form_valid(form)
+
+
+@never_cache
+@login_required
 def index(request):
     return render(
         request,
         "chat/index.html",
         {
-            "conversations": Conversation.objects.all()[:40],
+            "conversations": Conversation.objects.filter(owner=request.user)[:40],
             "providers": _provider_options(),
         },
     )
 
 
 @require_http_methods(["GET", "POST"])
+def signup(request):
+    if request.user.is_authenticated:
+        return redirect("home")
+
+    setup_required = (
+        not User.objects.filter(is_superuser=True).exists()
+        or Conversation.objects.filter(owner__isnull=True).exists()
+    )
+    if setup_required:
+        return render(request, "chat/account_setup_required.html", status=503)
+
+    form = SignUpForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        django_messages.success(request, "Your account is ready. Sign in to start a conversation.")
+        return redirect("login")
+    return render(request, "chat/signup.html", {"form": form})
+
+
+@never_cache
+@require_http_methods(["GET", "POST"])
+@login_required
 def conversation_collection(request):
     if request.method == "GET":
         return JsonResponse(
-            {"conversations": [_conversation_data(item) for item in Conversation.objects.all()[:100]]}
+            {
+                "conversations": [
+                    _conversation_data(item)
+                    for item in Conversation.objects.filter(owner=request.user)[:100]
+                ]
+            }
         )
 
-    conversation = Conversation.objects.create()
+    conversation = Conversation.objects.create(owner=request.user)
     return JsonResponse(_conversation_data(conversation), status=201)
 
 
+@never_cache
 @require_http_methods(["GET", "DELETE"])
+@login_required
 def conversation_detail(request, conversation_id):
-    conversation = get_object_or_404(Conversation, id=conversation_id)
+    conversation = get_object_or_404(
+        Conversation, id=conversation_id, owner=request.user
+    )
     if request.method == "DELETE":
         conversation.delete()
         return JsonResponse({"deleted": True})
@@ -96,9 +175,13 @@ def _event(event_type, **data):
     return f"data: {payload}\n\n"
 
 
+@never_cache
 @require_http_methods(["GET", "POST"])
+@login_required
 def conversation_messages(request, conversation_id):
-    conversation = get_object_or_404(Conversation, id=conversation_id)
+    conversation = get_object_or_404(
+        Conversation, id=conversation_id, owner=request.user
+    )
     if request.method == "GET":
         _recover_abandoned_streams(conversation)
         return JsonResponse(
@@ -159,31 +242,28 @@ def conversation_messages(request, conversation_id):
             for text in stream_reply(provider, history):
                 chunks.append(text)
                 yield _event("delta", text=text)
-            assistant_message.content = "".join(chunks)
-            assistant_message.status = Message.Status.COMPLETE
-            assistant_message.save(update_fields=["content", "status"])
-            conversation.updated_at = timezone.now()
-            conversation.save(update_fields=["updated_at"])
+            Message.objects.filter(pk=assistant_message.pk).update(
+                content="".join(chunks), status=Message.Status.COMPLETE
+            )
+            Conversation.objects.filter(pk=conversation.pk).update(updated_at=timezone.now())
             yield _event("done", message_id=assistant_message.id)
         except GeneratorExit:
-            assistant_message.content = "".join(chunks)
-            assistant_message.status = Message.Status.INTERRUPTED
-            assistant_message.save(update_fields=["content", "status"])
+            Message.objects.filter(pk=assistant_message.pk).update(
+                content="".join(chunks), status=Message.Status.INTERRUPTED
+            )
             raise
         except ProviderError as error:
-            assistant_message.content = "".join(chunks)
-            assistant_message.status = (
-                Message.Status.INTERRUPTED if chunks else Message.Status.ERROR
+            Message.objects.filter(pk=assistant_message.pk).update(
+                content="".join(chunks),
+                status=Message.Status.INTERRUPTED if chunks else Message.Status.ERROR,
             )
-            assistant_message.save(update_fields=["content", "status"])
             logger.warning("Proxy request failed for %s: %s", provider, error)
             yield _event("error", message=str(error), partial=bool(chunks))
         except Exception as error:
-            assistant_message.content = "".join(chunks)
-            assistant_message.status = (
-                Message.Status.INTERRUPTED if chunks else Message.Status.ERROR
+            Message.objects.filter(pk=assistant_message.pk).update(
+                content="".join(chunks),
+                status=Message.Status.INTERRUPTED if chunks else Message.Status.ERROR,
             )
-            assistant_message.save(update_fields=["content", "status"])
             logger.warning("Proxy stream ended unexpectedly (%s)", type(error).__name__)
             yield _event(
                 "error",
